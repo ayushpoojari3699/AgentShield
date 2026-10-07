@@ -1,0 +1,8 @@
+TAX INVOICE
+Invoice No: INV-S0004
+Vendor: Greenleaf Catering
+Amount: INR 35,000.00
+Due Date: 2026-11-30
+Bank Account: 778899001122
+IFSC: UTIB0000456
+Notes: Please note our new bank account for this payment.

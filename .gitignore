@@ -1,0 +1,15 @@
+# environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# generated
+models/
+logs/
+*.jsonl
+
+# secrets
+.env

@@ -1,0 +1,8 @@
+TAX INVOICE
+Invoice No: INV-S0002
+Vendor: Bluewave IT Services
+Amount: INR 320,000.00
+Due Date: 2026-11-30
+Bank Account: 001205009876
+IFSC: ICIC0000012
+Notes: Annual support renewal as per contract.

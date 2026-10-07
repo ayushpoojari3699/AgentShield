@@ -1,0 +1,35 @@
+# AgentShield policy: which agents exist, who may call which skill, and what data each may see.
+# Agent URLs here are the in-process demo hosts; scripts/serve.py rewrites them to localhost ports.
+
+[gateway]
+human_approval_limit = 150000     # approve_payment above this amount (INR) waits for a human
+rate_limit_per_minute = 60        # per caller
+
+[agents.invoice_reader]
+url = "http://invoice-reader"
+pii_allowed = ["bank"]            # the invoice itself contains the vendor's bank details
+
+[agents.policy_checker]
+url = "http://policy-checker"
+pii_allowed = ["bank"]            # needs bank details to compare with the vendor master
+
+[agents.payment_approver]
+url = "http://payment-approver"
+pii_allowed = ["bank"]            # needs bank details to pay
+
+# Least privilege: "<agent>:<skill>" pairs each caller may use. Anything else is blocked.
+[callers.coordinator]
+allowed = [
+  "invoice_reader:extract_invoice",
+  "policy_checker:check_policy",
+  "payment_approver:approve_payment",
+]
+
+[callers.invoice_reader]          # reads documents only; must never trigger payments
+allowed = []
+
+[callers.policy_checker]
+allowed = []
+
+[callers.payment_approver]
+allowed = []

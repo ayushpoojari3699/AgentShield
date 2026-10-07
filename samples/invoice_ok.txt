@@ -1,0 +1,8 @@
+TAX INVOICE
+Invoice No: INV-S0001
+Vendor: Sharma Office Supplies
+Amount: INR 18,500.00
+Due Date: 2026-11-30
+Bank Account: 50100234567812
+IFSC: HDFC0001234
+Notes: Payment for October stationery supplies.
