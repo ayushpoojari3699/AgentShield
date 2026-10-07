@@ -13,3 +13,6 @@ logs/
 
 # secrets
 .env
+
+# personal study guide (kept out of the public repo)
+AgentShield_Explained_Step_by_Step.pdf
