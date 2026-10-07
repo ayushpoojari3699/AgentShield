@@ -13,6 +13,24 @@ writes an **audit log**. A red-team benchmark then attacks the system and measur
 
 Everything runs locally and free: Python, FastAPI, scikit-learn. No API keys, no GPU.
 
+## AgentShield Console
+
+A web app to run invoices through the agents, launch attacks with defences switched on or
+off, approve held payments, read the audit log and explore the benchmark.
+
+```bash
+python -m agentshield.app        # then open http://127.0.0.1:8000
+```
+
+| Process an invoice | Attack lab | Benchmark |
+|---|---|---|
+| ![Process an invoice](docs/console-process.png) | ![Attack lab](docs/console-attack-lab.png) | ![Benchmark](docs/console-benchmark.png) |
+
+- **Process invoice:** pick a sample or write your own, then see every gateway check per call (✓ passed, ⛔ stopped here, ⏸ held).
+- **Attack lab:** eight attacks; switch any defence off and watch the attack land, switch it on and watch it fail.
+- **Approvals:** payments above ₹1,50,000 wait here as A2A tasks in `TASK_STATE_INPUT_REQUIRED`.
+- **Audit log** and **Benchmark** (stat tiles, detection by attack type, ablation).
+
 ```
                          ┌──────────────────── AgentShield gateway ────────────────────┐
  Coordinator ──A2A──►    │ 1 authenticate   2 rate limit   3 pinned Agent Card          │ ──A2A──► Invoice Reader
@@ -103,9 +121,10 @@ python -m venv .venv
 .venv\Scripts\activate            # Windows  (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
 
-python -m agentshield.demo        # guided tour: 7 scenarios, one defence each
+python -m agentshield.app         # web console at http://127.0.0.1:8000
+python -m agentshield.demo        # terminal tour: 7 scenarios, one defence each
 python -m agentshield.benchmark   # red-team benchmark -> results/benchmark.md
-python -m pytest -q               # 16 tests, ~10 s
+python -m pytest -q               # 19 tests, a few seconds
 ```
 
 The detector trains itself on first use (about a second) and is saved to `models/`.
@@ -122,6 +141,18 @@ python -m agentshield.client --approve <approval_id>
 python -m agentshield.client --audit
 curl http://127.0.0.1:8101/.well-known/agent-card.json        # an Agent Card
 ```
+
+## Deploy the console (free)
+
+The console runs the agents, the gateway and the web app in one process, so it deploys like
+any small Python web app. A `Dockerfile` is included (listens on port 7860).
+
+- **Hugging Face Spaces:** create a Space with the *Docker* SDK and push this repository to it.
+  The Space's own README needs `sdk: docker` and `app_port: 7860` in its front matter.
+- **Render / Railway / any container host:** build command `pip install -r requirements.txt`,
+  start command `python -m agentshield.app` with `HOST=0.0.0.0` (the host sets `PORT`).
+
+Check each host's current free-tier limits. Set real secrets (see `.env.example`) on any public deployment.
 
 ## How A2A is used
 
@@ -189,10 +220,12 @@ agentshield/
   data.py        synthetic invoices and attack/benign texts (train/test kept separate)
   network.py     wires agents + gateway; the coordinator workflow
   benchmark.py   red-team benchmark -> results/
-  demo.py        guided tour      serve.py / client.py   live HTTP mode
+  app.py         AgentShield Console (FastAPI) + static/index.html
+  demo.py        terminal tour    serve.py / client.py   live HTTP mode
 config/policy.toml   agents, least-privilege allow-lists, PII allow-lists, limits
 samples/             example invoices for live mode
-tests/               16 end-to-end tests
+tests/               19 tests (gateway end to end + console API)
+docs/                console screenshots
 results/             benchmark report
 ```
 

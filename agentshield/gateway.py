@@ -84,6 +84,7 @@ class Policy:
     scan_responses: bool = True
     enforce_capabilities: bool = True
     redact_pii: bool = True
+    verify_agents: bool = True   # registry review + Agent Card pinning / quarantine
 
     @classmethod
     def load(cls, path: Path = DEFAULT_POLICY, **overrides) -> "Policy":
@@ -159,6 +160,16 @@ class Gateway:
         async with self._http() as c:
             r = await c.get(url.rstrip("/") + a2a.CARD_PATH)
             card = r.json()
+        if not self.policy.verify_agents:
+            # INSECURE MODE (for the attack lab): trust whatever registers, by name
+            for agent_id, trusted in list(self.cards.items()):
+                if card.get("name") == trusted.get("name"):
+                    self.policy.agents[agent_id] = {**self.policy.agents[agent_id], "url": url}
+                    self.cards[agent_id], self.pinned[agent_id] = card, card_fingerprint(card)
+                    self._log("registry", agent_id, "register", "allowed",
+                              ["no verification: agent replaced"], {}, 0.0)
+                    return {"status": "trusted", "replaced": agent_id}
+            return {"status": "trusted"}
         for agent_id, trusted in self.cards.items():
             if card.get("name") == trusted.get("name") and \
                     url.rstrip("/") != self.policy.agents[agent_id]["url"].rstrip("/"):
@@ -169,10 +180,12 @@ class Gateway:
         return {"status": "pending_review", "card_name": card.get("name")}
 
     # ------------------------------------------------------------------ main path
-    def _log(self, caller, target, skill, decision, reasons, timings, total_ms, trace_id=None):
+    def _log(self, caller, target, skill, decision, reasons, timings, total_ms, trace_id=None,
+             failed_check=None):
         rec = {"ts": round(time.time(), 3), "trace_id": trace_id or a2a.new_id()[:12],
                "caller": caller, "target": target, "skill": skill, "decision": decision,
-               "reasons": reasons, "timings_ms": timings, "latency_ms": round(total_ms, 2)}
+               "failed_check": failed_check, "reasons": reasons, "timings_ms": timings,
+               "latency_ms": round(total_ms, 2)}
         self.audit.append(rec)
         if self.audit_path:
             self.audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,35 +222,36 @@ class Gateway:
         def lap(name, start):
             timings[name] = round((time.perf_counter() - start) * 1000, 3)
 
-        def block(code, reason, data=None):
+        def block(code, reason, data=None, check=None):
             self._log(caller, target, skill, "blocked", [reason], timings,
-                      (time.perf_counter() - t0) * 1000)
+                      (time.perf_counter() - t0) * 1000, failed_check=check)
             return a2a.rpc_error(req_id, A2AError(code, f"Blocked by AgentShield: {reason}", data))
 
         s = time.perf_counter()
         if caller not in self.policy.callers or key != dev_key(caller):
             lap("auth", s)
-            return block(E_UNAUTHENTICATED, "unknown caller or wrong key")
+            return block(E_UNAUTHENTICATED, "unknown caller or wrong key", check="auth")
         lap("auth", s)
         if not self._rate_ok(caller):
-            return block(E_RATE_LIMITED, "rate limit exceeded")
+            return block(E_RATE_LIMITED, "rate limit exceeded", check="rate_limit")
 
         s = time.perf_counter()
         if target not in self.policy.agents or target not in self.pinned:
             lap("trust", s)
-            return block(E_UNTRUSTED_AGENT, f"'{target}' is not a registered, pinned agent")
-        if target in self.quarantined:
+            return block(E_UNTRUSTED_AGENT, f"'{target}' is not a registered, pinned agent", check="trust")
+        if self.policy.verify_agents and target in self.quarantined:
             lap("trust", s)
-            return block(E_UNTRUSTED_AGENT, f"'{target}' is quarantined: {self.quarantined[target]}")
+            return block(E_UNTRUSTED_AGENT, f"'{target}' is quarantined: {self.quarantined[target]}",
+                         check="trust")
         if skill not in a2a.card_skill_ids(self.cards[target]):
             lap("trust", s)
-            return block(a2a.ERR_UNSUPPORTED_SKILL, f"'{target}' has no skill '{skill}'")
+            return block(a2a.ERR_UNSUPPORTED_SKILL, f"'{target}' has no skill '{skill}'", check="trust")
         lap("trust", s)
 
         s = time.perf_counter()
         if self.policy.enforce_capabilities and not self.policy.allowed(caller, target, skill):
             lap("capability", s)
-            return block(E_FORBIDDEN_SKILL, f"'{caller}' may not call {target}:{skill}")
+            return block(E_FORBIDDEN_SKILL, f"'{caller}' may not call {target}:{skill}", check="capability")
         lap("capability", s)
 
         if self.policy.scan_requests:
@@ -245,7 +259,7 @@ class Gateway:
             hit = self._scan(message.get("parts", []))
             lap("injection_scan", s)
             if hit:
-                return block(E_INJECTION, "prompt injection detected in request", hit)
+                return block(E_INJECTION, "prompt injection detected in request", hit, check="injection_scan")
 
         if self.policy.redact_pii:
             s = time.perf_counter()
@@ -262,7 +276,7 @@ class Gateway:
                 self.pending[approval_id] = {"caller": caller, "target": target, "body": body}
                 self._log(caller, target, skill, "held", reasons + [f"amount {amount:,.0f} above "
                           f"human-approval limit {self.policy.human_approval_limit:,.0f}"],
-                          timings, (time.perf_counter() - t0) * 1000)
+                          timings, (time.perf_counter() - t0) * 1000, failed_check="human_approval")
                 return a2a.rpc_result(req_id, a2a.task_result(
                     a2a.TASK_INPUT_REQUIRED, "Held for human approval", {"approval_id": approval_id,
                                                                          "amount": amount}))
@@ -289,7 +303,7 @@ class Gateway:
                 timings["response_scan"] = round((time.perf_counter() - s) * 1000, 3)
                 if hit:
                     self._log(caller, target, skill, "blocked", ["prompt injection in response"],
-                              timings, (time.perf_counter() - t0) * 1000)
+                              timings, (time.perf_counter() - t0) * 1000, failed_check="response_scan")
                     return a2a.rpc_error(req_id, A2AError(
                         E_RESPONSE_INJECTION, "Blocked by AgentShield: prompt injection in response", hit))
             if self.policy.redact_pii:
@@ -320,7 +334,8 @@ def create_gateway_app(gw: Gateway, public_url: str = "http://gateway") -> FastA
     @app.get("/agents")
     async def directory():
         """Discovery: only trusted, non-quarantined agents, with URLs pointing at the gateway."""
-        return [_proxied(agent_id) for agent_id in gw.cards if agent_id not in gw.quarantined]
+        return [_proxied(agent_id) for agent_id in gw.cards
+                if not (gw.policy.verify_agents and agent_id in gw.quarantined)]
 
     def _proxied(agent_id: str) -> dict:
         card = json.loads(json.dumps(gw.cards[agent_id]))
@@ -329,7 +344,7 @@ def create_gateway_app(gw: Gateway, public_url: str = "http://gateway") -> FastA
 
     @app.get("/agents/{agent_id}" + a2a.CARD_PATH)
     async def agent_card(agent_id: str):
-        if agent_id not in gw.cards or agent_id in gw.quarantined:
+        if agent_id not in gw.cards or (gw.policy.verify_agents and agent_id in gw.quarantined):
             return JSONResponse({"error": "unknown or quarantined agent"}, status_code=404)
         return _proxied(agent_id)
 

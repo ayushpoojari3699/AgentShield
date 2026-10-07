@@ -54,7 +54,5 @@ The reader obeys payment instructions hidden in invoice notes and tries to call 
 
 | Mode | Median ms | p95 ms |
 |---|---|---|
-| pass-through (checks off) | 0.66 | 0.92 |
-| all checks on | 4.88 | 6.34 |
-
-Checks add about **4.22 ms** per call (median).
+| pass-through (checks off) | 1.88 | 2.23 |
+| all checks on | 6.55 |
